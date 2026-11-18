@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+shodh.db
+judge_tmp/
+.env

@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shodh
+      POSTGRES_PASSWORD: shodh
+      POSTGRES_DB: shodh
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shodh -d shodh"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    command: sh -c "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://shodh:shodh@db:5432/shodh
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: python -m worker.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://shodh:shodh@db:5432/shodh
+      JUDGE_MODE: docker
+      JUDGE_IMAGE: python:3.12-slim
+      # Host path of the judge workdir root. The worker creates one subdir per
+      # test run here and passes it to the Docker daemon as the judge
+      # container's /work bind mount, so the path must be identical on the
+      # host and inside the worker container. Run `docker compose` from the
+      # project root so ${PWD} resolves to this directory.
+      JUDGE_HOST_TMP: ${PWD}/judge_tmp
+      # Failure-injection hook for recovery testing (see README). Only code
+      # containing this exact marker triggers an artificial judge failure.
+      JUDGE_FAIL_MARKER: "# INJECT_JUDGE_FAILURE"
+    volumes:
+      # The WORKER (trusted code) talks to the daemon to spawn judge
+      # containers. Judged code never sees this socket: judge containers are
+      # created with no socket mount, no network and a read-only root fs.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}/judge_tmp:/judge_tmp
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
