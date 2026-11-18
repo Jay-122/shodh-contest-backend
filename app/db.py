@@ -29,4 +29,18 @@ def init_db():
     safety net in compose; the canonical Postgres DDL lives in migrations/)."""
     from . import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "postgresql":
+        # The API, the worker and the seed can all start at the same moment
+        # against a fresh database, and concurrent CREATE TABLE races at the
+        # catalog level (observed on Docker Desktop: duplicate key on
+        # pg_class for the id sequence). Serialize schema creation with a
+        # session-level advisory lock so exactly one process creates the
+        # tables and the rest find them already present.
+        with engine.begin() as conn:
+            conn.exec_driver_sql("SELECT pg_advisory_lock(727272)")
+            try:
+                Base.metadata.create_all(bind=conn)
+            finally:
+                conn.exec_driver_sql("SELECT pg_advisory_unlock(727272)")
+    else:
+        Base.metadata.create_all(bind=engine)

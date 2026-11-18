@@ -87,13 +87,15 @@ pass**; full output is in `VERIFICATION.md`.
 
 ## 8. Known limitations (honest)
 
-- **Docker path smoke test:** the build/verification machine had no Docker daemon, so
-  functional verification ran the identical code against SQLite with the judge in a
-  labelled `local` execution mode (real subprocess execution with timeout + rlimits;
-  every attempt records its execution mode). The Compose stack (PostgreSQL +
-  `JUDGE_MODE=docker`) is the same code and its configuration is validated, but the
-  Docker judge path should get one smoke run (`python scripts/verify.py`) on a Docker
-  host. Latency figures from the local run are inflated by SQLite's single-writer lock
+- **Verification environments:** functional verification ran in two environments — the
+  build machine (no Docker daemon; identical code against SQLite, judge in a labelled
+  `local` mode, real subprocess execution with timeout + rlimits) and a Docker host
+  running the full evaluated path (`docker compose up --build`, PostgreSQL, Docker
+  judge): **34/34 checks pass in Docker mode**. The Docker smoke test earned its keep —
+  it caught two real first-boot bugs (a bind-mount path-translation failure on Docker
+  Desktop, and a concurrent CREATE TABLE race on a fresh database), both fixed and
+  recorded in `VERIFICATION.md`. The workload/EXPLAIN measurements were taken in the
+  local environment, whose latency figures are inflated by SQLite's single-writer lock
   and are labelled as such.
 - Dev-auth is a fixture, as the brief allows; production would use real identity tokens.
 - One judge language (Python); the runner interface is per-language and extensible.

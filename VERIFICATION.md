@@ -1,15 +1,36 @@
 # Verification record
 
-**Environment note (read first):** the build machine for this verification
-had **no Docker daemon** (`docker: command not found`), so
-`docker compose up --build` could not be executed here. Everything below was
-verified by running the API + worker processes directly against SQLite with
-`JUDGE_MODE=local` (real code execution via subprocess + `timeout` + rlimits;
-execution mode is recorded on every attempt). The compose stack
-(PostgreSQL + `JUDGE_MODE=docker`) is the same code with the Docker runner
-and was syntax-validated (`docker-compose.yml` parses; all Python compiles),
-but the Docker judge path itself is **unverified on this machine** and should
-be smoke-tested once on a Docker host with `python scripts/verify.py`.
+**Environment note:** verification ran in two environments.
+(1) The build machine had **no Docker daemon**, so the first pass ran the API
++ worker processes directly against SQLite with `JUDGE_MODE=local` (real code
+execution via subprocess + `timeout` + rlimits; the execution mode is recorded
+on every attempt) — sections 1–4 below.
+(2) The full evaluated path — `docker compose up --build` (PostgreSQL +
+`JUDGE_MODE=docker`) on Docker Desktop for Windows — was then run on a Docker
+host: **34/34 checks pass in Docker mode** (section 0). The smoke test found
+and fixed two real first-boot bugs, also recorded in section 0.
+
+## 0. Docker-mode verification (the evaluated path) — 2026-11-18
+
+Setup: fresh volume (`docker compose down -v`), `docker compose up --build`,
+then `docker compose exec api python scripts/verify.py` against the running
+stack. Result: **34/34 checks passed**, every judged attempt recorded with
+`execution_mode: docker` (ACCEPTED / WRONG_ANSWER / RUNTIME_ERROR /
+TIME_LIMIT_EXCEEDED all produced by real container execution).
+
+Two bugs the smoke test caught and fixed:
+
+1. **Judge workdir path translation.** The worker passed bind-mount source
+   paths in its own container's namespace; the daemon interpreted them in
+   the host namespace, mounted an empty directory, and judged code never
+   ran ("runner produced no exit status" on every attempt). Fix: the worker
+   translates the workdir through its own mount table before requesting the
+   bind mount (`worker/runner.py`); compose now mounts `./judge_tmp`
+   relatively and sets `JUDGE_HOST_TMP=/judge_tmp`.
+2. **First-boot schema race.** On a fresh database the API, worker and seed
+   ran `CREATE TABLE` concurrently and one process crashed on a catalog
+   duplicate-key. Fix: schema creation is serialized with a PostgreSQL
+   advisory lock (`app/db.py`).
 
 Setup used for every run below:
 
@@ -114,8 +135,7 @@ stats/rejudge review.
 
 ## 5. What is NOT verified here
 
-- `docker compose up --build` end-to-end and the Docker judge mode
-  (no Docker daemon on the build machine) — same code path selection via
-  `JUDGE_MODE`; needs one smoke run on a Docker host.
-- PostgreSQL-specific behavior (the local runs used SQLite through the same
-  SQLAlchemy models; compose uses Postgres).
+- The two-worker competing-claims run and the workload/EXPLAIN measurements
+  (sections 2–4) were run in the local/SQLite environment; the Docker-mode
+  run (section 0) covers the full 34-check functional suite on PostgreSQL,
+  including the injected-failure and rejudge paths, with one worker.

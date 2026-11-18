@@ -122,13 +122,33 @@ def _run_docker(workdir: str, wall_s: int, memory_mb: int) -> dict:
     except Exception as exc:  # daemon down / socket missing = infra failure
         raise RunnerInfraError(f"docker daemon unreachable: {exc}") from exc
 
+    # The daemon interprets bind-mount sources in ITS OWN filesystem
+    # namespace, not this worker container's. When the worker itself runs in
+    # a container (docker compose), a workdir like /judge_tmp/judge-123 must
+    # be translated through this container's mount table, otherwise the
+    # daemon mounts an empty directory and the judged code never runs
+    # (observed on Docker Desktop for Windows, where the host path is a
+    # D:\ path that can never equal the in-container path).
+    host_workdir = workdir
+    try:
+        import socket
+
+        me = client.containers.get(socket.gethostname())
+        for mount in me.attrs.get("Mounts", []):
+            dest = mount.get("Destination", "")
+            if workdir == dest or workdir.startswith(dest + "/"):
+                host_workdir = mount["Source"] + workdir[len(dest):]
+                break
+    except Exception:
+        pass  # fall back to the untranslated path (bare-metal worker)
+
     container = None
     start = time.monotonic()
     try:
         container = client.containers.run(
             JUDGE_IMAGE,
             ["bash", "/work/run.sh"],
-            volumes={workdir: {"bind": "/work", "mode": "rw"}},
+            volumes={host_workdir: {"bind": "/work", "mode": "rw"}},
             network_mode="none",
             nano_cpus=1_000_000_000,  # 1 CPU
             mem_limit=f"{memory_mb}m",
